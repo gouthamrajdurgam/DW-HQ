@@ -1,21 +1,116 @@
+from __future__ import annotations
+
+import re
 from typing import Any, Dict, List
 
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
-def normalize_listing(raw: Dict[str, Any]) -> Dict[str, Any]:
-    listing = {
-        "id": f"{raw.get('source')}::{raw.get('url') or raw.get('title')}",
-        "source": raw.get("source", "unknown"),
-        "title": raw.get("title", "Property"),
-        "price": float(raw.get("price") or 0),
-        "location": raw.get("location", ""),
-        "district": raw.get("district", ""),
-        "property_type": raw.get("property_type", "apartment"),
-        "size_m2": float(raw.get("size_m2") or 0),
-        "beds": int(raw.get("beds") or 0),
-        "url": raw.get("url", ""),
-    }
-    return listing
+from app.scrapers.base import BaseScraper
 
 
-def normalize_batch(raw_listings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [normalize_listing(item) for item in raw_listings]
+class KleinanzeigenScraper(BaseScraper):
+    source_name = "kleinanzeigen"
+
+    def collect(self, query: str) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1440, "height": 2200})
+            page.goto(query, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(4000)
+            html = page.content()
+            browser.close()
+
+        soup = BeautifulSoup(html, "html.parser")
+        selectors = [
+            "article",
+            ".ad-item",
+            ".listing-item",
+            ".ad-card",
+            ".aditem",
+        ]
+
+        for selector in selectors:
+            cards = soup.select(selector)
+            if not cards:
+                continue
+            for card in cards:
+                try:
+                    title_el = card.select_one("h2, h3, .title, .ad-title")
+                    title = title_el.get_text(" ", strip=True) if title_el else "Property"
+
+                    price_el = card.select_one(".price, .ad-price, .listing-price")
+                    price = self._extract_price(price_el.get_text(" ", strip=True) if price_el else "")
+
+                    location_el = card.select_one(".location, .address, .ad-location")
+                    location = location_el.get_text(" ", strip=True) if location_el else ""
+
+                    size_el = card.select_one(".size, .living-space, .ad-size")
+                    size_text = size_el.get_text(" ", strip=True) if size_el else ""
+                    size_m2 = self._extract_size(size_text)
+
+                    beds_el = card.select_one(".rooms, .ad-rooms")
+                    beds_text = beds_el.get_text(" ", strip=True) if beds_el else ""
+                    beds = self._extract_beds(beds_text)
+
+                    link_el = card.select_one("a[href]")
+                    url = link_el.get("href") if link_el else ""
+                    if url and not url.startswith("http"):
+                        url = "https://www.kleinanzeigen.de" + url
+
+                    if not url:
+                        continue
+
+                    results.append({
+                        "source": "kleinanzeigen",
+                        "title": title,
+                        "price": price,
+                        "location": location,
+                        "district": self._district_from_location(location),
+                        "property_type": self._property_type_from_title(title),
+                        "size_m2": size_m2,
+                        "beds": beds,
+                        "url": url,
+                    })
+                except Exception:
+                    continue
+
+        return results
+
+    def _extract_price(self, text: str) -> float:
+        if not text:
+            return 0.0
+        match = re.search(r"(\d+(?:[\.,]\d{1,2})?)", text.replace(".", "").replace(" ", ""))
+        if not match:
+            return 0.0
+        return float(match.group(1).replace(",", "."))
+
+    def _extract_size(self, text: str) -> float:
+        if not text:
+            return 0.0
+        match = re.search(r"(\d+(?:[\.,]\d{1,2})?)\s*(?:m²|m2|qm)", text.lower())
+        if not match:
+            return 0.0
+        return float(match.group(1).replace(",", "."))
+
+    def _extract_beds(self, text: str) -> int:
+        if not text:
+            return 0
+        match = re.search(r"(\d+)\s*(?:zimmer|rooms)", text.lower())
+        if match:
+            return int(match.group(1))
+        match = re.search(r"(\d+)", text)
+        if match:
+            return int(match.group(1))
+        return 0
+
+    def _property_type_from_title(self, title: str) -> str:
+        title = title.lower()
+        if "haus" in title or "house" in title:
+            return "house"
+        return "apartment"
+
+    def _district_from_location(self, location: str) -> str:
+        parts = [p.strip() for p in location.split(",")]
+        return parts[0] if parts else ""

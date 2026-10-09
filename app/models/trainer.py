@@ -41,18 +41,18 @@ class HybridRanker:
 
     def score_listing(self, listing: Dict[str, Any], prefs: Dict[str, Any]) -> float:
         features = build_feature_vector(listing, prefs)
-        feature_values = [features[col] for col in feature_columns()]
+        values = [features.get(col, 0.0) for col in feature_columns()]
         rule_score = self.rule_score(listing, prefs)
         if self.is_trained:
-            model_score = self.model.predict([feature_values])[0]
+            model_score = self.model.predict([values])[0]
             return float(rule_score + model_score)
         return float(rule_score)
 
     def rank(self, listings: List[Dict[str, Any]], prefs: Dict[str, Any]) -> List[Dict[str, Any]]:
         ranked = []
         for listing in listings:
-            listing = dict(listing)
-            listing["score"] = self.score_listing(listing, prefs)
-            ranked.append(listing)
+            item = dict(listing)
+            item["score"] = self.score_listing(item, prefs)
+            ranked.append(item)
         ranked.sort(key=lambda x: x["score"], reverse=True)
         return ranked

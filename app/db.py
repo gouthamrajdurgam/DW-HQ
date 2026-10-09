@@ -1,36 +1,19 @@
-from dataclasses import dataclass, field
-from typing import List, Dict, Any
-
-from app import load_preferences
+import smtplib
+from email.message import EmailMessage
 
 
-@dataclass
-class Preferences:
-    city: str = "Berlin"
-    target_districts: List[str] = field(default_factory=lambda: ["Prenzlauer Berg", "Friedrichshain"])
-    property_types: List[str] = field(default_factory=lambda: ["apartment", "house"])
-    max_price: float = 2200
-    min_size_m2: float = 55
-    max_radius_km: int = 8
-    preferred_beds: int = 2
-    preferred_states: List[str] = field(default_factory=lambda: ["Berlin", "Berlin-Mitte"])
-    top_n: int = 3
-    email_to: str = ""
-    email_from: str = ""
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
+def send_shortlist_email(subject: str, body: str, to_email: str, from_email: str, smtp_host: str, smtp_user: str, smtp_password: str, smtp_port: int = 587) -> None:
+    if not all([to_email, from_email, smtp_host, smtp_user, smtp_password]):
+        print("SMTP settings missing; skipping email send.")
+        return
 
-    @classmethod
-    def from_file(cls) -> "Preferences":
-        raw = load_preferences()
-        data = cls()
-        for key, value in raw.items():
-            if hasattr(data, key):
-                setattr(data, key, value)
-        return data
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg.set_content(body)
 
-
-def get_preferences() -> Preferences:
-    return Preferences.from_file()
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)

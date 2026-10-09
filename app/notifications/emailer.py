@@ -1,34 +1,13 @@
-import csv
-from pathlib import Path
-from typing import Dict, List
+from __future__ import annotations
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-CSV_PATH = DATA_DIR / "feedback.csv"
+from typing import Any, Dict, List
 
 
-def ensure_feedback_file() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not CSV_PATH.exists():
-        with CSV_PATH.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["listing_id", "label", "features_json", "created_at"])
+class BaseScraper:
+    source_name: str = "base"
 
+    def __init__(self, preferences: Dict[str, Any] | None = None):
+        self.preferences = preferences or {}
 
-def add_feedback(listing_id: str, label: int, features: Dict[str, float]) -> None:
-    ensure_feedback_file()
-    import json
-    with CSV_PATH.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            listing_id,
-            label,
-            json.dumps(features),
-            __import__("datetime").datetime.utcnow().isoformat(),
-        ])
-
-
-def load_feedback() -> List[Dict[str, str]]:
-    if not CSV_PATH.exists():
-        return []
-    with CSV_PATH.open("r", encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
+    def collect(self, query: str) -> List[Dict[str, Any]]:
+        raise NotImplementedError
