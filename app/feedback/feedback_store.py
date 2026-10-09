@@ -1,48 +1,52 @@
-import csv
-import json
-from pathlib import Path
-from typing import Dict, List
+# DW-HQ
 
-from sklearn.linear_model import LinearRegression
+DW-HQ is a starter project for an automated housing recommendation bot.
 
-from app.models.feature_builder import feature_columns
+It aims to:
+- scrape apartment listings from ImmoScout24 and eBay Kleinanzeigen
+- normalize and filter them into a common format
+- expand searches slightly when results are thin
+- rank listings using a preference model
+- learn from likes/dislikes over time
+- send a daily top-3 shortlist
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+## Current status
+This is an MVP foundation. It is intentionally simple and structured so you can extend it without starting from scratch.
 
+## Local setup
 
-def load_feedback_rows() -> List[Dict[str, float]]:
-    path = DATA_DIR / "feedback.csv"
-    if not path.exists():
-        return []
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install --with-deps chromium
+python -m app.main --review
+```
 
-    rows: List[Dict[str, float]] = []
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if not row.get("listing_id"):
-                continue
-            try:
-                features = json.loads(row.get("features_json", "{}"))
-            except Exception:
-                features = {}
-            rows.append({"features": features, "label": float(row.get("label", 0))})
-    return rows
+## How feedback learning works
+The shortlist review flow prompts you to mark listings as liked or disliked. Those labels are stored in `data/feedback.csv` and used to retrain the ranking model.
 
+Run:
 
-def train_model_from_feedback() -> LinearRegression:
-    rows = load_feedback_rows()
-    if not rows:
-        model = LinearRegression()
-        model.fit([[0.0] * len(feature_columns())], [0.0])
-        return model
+```bash
+python -m app.main --review
+```
 
-    X = []
-    y = []
-    for row in rows:
-        feature_values = [row["features"].get(col, 0.0) for col in feature_columns()]
-        X.append(feature_values)
-        y.append(float(row["label"]))
+or retrain only:
 
-    model = LinearRegression()
-    model.fit(X, y)
-    return model
+```bash
+python -m app.main --retrain-only
+```
+
+## Configuration
+Edit `preferences.yaml` with your preferred city, districts, property type, budget, and SMTP settings.
+
+## Daily workflow
+A GitHub Actions workflow is included under `.github/workflows/daily_shortlist.yml`.
+Set the required SMTP and email secrets in the repository settings for scheduled daily sends.
+
+## Next improvements
+- Add a better model trained on actual user feedback
+- Add a lightweight UI or notebook for likes/dislikes
+- Add a retry and anti-bot strategy for portal changes
+- Persist a richer listing feature set and scoring timeline

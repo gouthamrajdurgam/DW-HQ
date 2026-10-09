@@ -1,30 +1,35 @@
-city: "Berlin"
-target_districts:
-  - "Prenzlauer Berg"
-  - "Friedrichshain"
-  - "Mitte"
-preferred_states:
-  - "Berlin"
-  - "Berlin-Mitte"
-property_types:
-  - "apartment"
-  - "house"
-max_price: 2200
-min_size_m2: 55
-max_radius_km: 8
-preferred_beds: 2
-top_n: 3
-email_to: ""
-email_from: ""
-smtp_host: ""
-smtp_port: 587
-smtp_user: ""
-smtp_password: ""
+from __future__ import annotations
 
-# Set these in GitHub Actions secrets for the scheduled run.
-# Example:
-# email_to: "you@example.com"
-# email_from: "you@example.com"
-# smtp_host: "smtp.example.com"
-# smtp_user: "your-user"
-# smtp_password: "your-password"
+from typing import Any, Dict, List
+
+from app.feedback.feedback_store import add_feedback
+from app.models.feature_builder import build_feature_vector
+
+
+def review_shortlist(shortlist: List[Dict[str, Any]], prefs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not shortlist:
+        print("No shortlist available to review.")
+        return []
+
+    reviewed = []
+    for index, item in enumerate(shortlist, start=1):
+        print(f"\n[{index}/{len(shortlist)}]")
+        print(f"Title: {item.get('title')}")
+        print(f"Price: {item.get('price')} EUR")
+        print(f"Location: {item.get('location')}")
+        print(f"URL: {item.get('url')}")
+        choice = input("Like? [y]es / [n]o / [s]kip: ").strip().lower()
+
+        if choice in {"y", "yes"}:
+            features = build_feature_vector(item, prefs)
+            add_feedback(item.get("id"), 1, features)
+            item["liked"] = True
+            reviewed.append(item)
+        elif choice in {"n", "no"}:
+            features = build_feature_vector(item, prefs)
+            add_feedback(item.get("id"), 0, features)
+            item["liked"] = False
+        else:
+            reviewed.append(item)
+
+    return reviewed
