@@ -1,0 +1,114 @@
+import json
+from typing import Dict, List, Any
+
+from app.config import get_preferences
+from app.db import get_connection
+from app.feedback.feedback_store import add_feedback
+from app.models.feature_builder import build_feature_vector, feature_columns
+from app.models.ranking_model import HybridRanker
+from app.models.trainer import train_model_from_feedback
+from app.notifications.emailer import send_shortlist_email
+from app.scrapers.immoscout import ImmoScoutScraper
+from app.scrapers.kleinanzeigen import KleinanzeigenScraper
+from app.scrapers.normalize import normalize_batch
+from app.search.expand import expand_search_params
+from app.search.filter import filter_listings
+from app.utils import unique_by_url
+
+
+def build_search_queries(prefs: Dict[str, Any]) -> List[str]:
+    city = prefs.get("city", "Berlin")
+    max_price = prefs.get("max_price", 2200)
+    radius = prefs.get("max_radius_km", 8)
+    return [
+        f"https://www.immoscout24.de/Suche/S-2/Wohnung-Miete/{city}?geoid=101?price={max_price}&r={radius}",
+        f"https://www.kleinanzeigen.de/s-wohnung-mieten/{city}?price=0-{max_price}&radius={radius}",
+    ]
+
+
+def store_listings(listings: List[Dict[str, Any]]) -> None:
+    conn = get_connection()
+    for item in listings:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO listings (id, source, title, price, location, district, property_type, size_m2, beds, url, created_at, raw)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+            """,
+            (
+                item["id"],
+                item["source"],
+                item["title"],
+                item["price"],
+                item["location"],
+                item["district"],
+                item["property_type"],
+                item["size_m2"],
+                item["beds"],
+                item["url"],
+                json.dumps(item),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def build_shortlist() -> List[Dict[str, Any]]:
+    prefs = get_preferences().__dict__
+    search_queries = build_search_queries(prefs)
+    raw_listings: List[Dict[str, Any]] = []
+
+    for query in search_queries:
+        if "immoscout" in query:
+            scraper = ImmoScoutScraper()
+        else:
+            scraper = KleinanzeigenScraper()
+        raw_listings.extend(scraper.collect(query))
+
+    listings = normalize_batch(raw_listings)
+    listings = unique_by_url(listings)
+    listings = filter_listings(listings, prefs)
+
+    if len(listings) == 0:
+        expanded = expand_search_params(prefs, 0)
+        listings = filter_listings(listings, expanded)
+
+    model = HybridRanker()
+    feedback = train_model_from_feedback()
+    if hasattr(feedback, "coef_"):
+        model.model = feedback
+        model.is_trained = True
+    ranked = model.rank(listings, prefs)
+    return ranked[:prefs.get("top_n", 3)]
+
+
+def send_daily_email(top_listings: List[Dict[str, Any]], prefs: Dict[str, Any]) -> None:
+    body_lines = ["Top 3 property shortlist:"]
+    for idx, item in enumerate(top_listings, start=1):
+        body_lines.append(f"{idx}. {item.get('title')} | {item.get('price')} EUR | {item.get('location')} | {item.get('url')}")
+    body = "\n".join(body_lines)
+
+    send_shortlist_email(
+        subject="Daily property shortlist",
+        body=body,
+        to_email=prefs.get("email_to", ""),
+        from_email=prefs.get("email_from", ""),
+        smtp_host=prefs.get("smtp_host", ""),
+        smtp_user=prefs.get("smtp_user", ""),
+        smtp_password=prefs.get("smtp_password", ""),
+        smtp_port=int(prefs.get("smtp_port", 587)),
+    )
+
+
+def example_feedback() -> None:
+    # Example: mark the best listings as liked after manual review.
+    # Replace with UI or external manual process in a real app.
+    pass
+
+
+if __name__ == "__main__":
+    preferences = get_preferences().__dict__
+    shortlist = build_shortlist()
+    send_daily_email(shortlist, preferences)
+    print(f"Found {len(shortlist)} shortlisted properties.")
+    for item in shortlist:
+        print(item.get("title"), item.get("price"), item.get("url"))

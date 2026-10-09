@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+.venv/
+*.pyc
+*.pyo
+.DS_Store
+.idea/
+.vscode/
+*.log
+/data/*.db
+/data/*.csv
+/model.joblib

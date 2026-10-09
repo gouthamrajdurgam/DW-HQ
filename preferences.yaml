@@ -1,0 +1,5 @@
+beautifulsoup4==4.12.3
+playwright==1.48.0
+PyYAML==6.0.2
+scikit-learn==1.5.2
+sqlite-utils==3.38
